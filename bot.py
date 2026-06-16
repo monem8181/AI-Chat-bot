@@ -278,9 +278,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(formatted, parse_mode=ParseMode.MARKDOWN_V2)
 
     except Exception as e:
-        logger.error(f"API error for user {user_id}: {e}")
+        import traceback
+        logger.error(f"API error for user {user_id}: {type(e).__name__}: {e}")
+        logger.error(traceback.format_exc())
+        err_text = escape_md(f"{type(e).__name__}: {str(e)[:200]}")
         await update.message.reply_text(
-            "⚠️ Sorry, something went wrong\\. Please try again\\.",
+            f"⚠️ Error: `{err_text}`",
             parse_mode=ParseMode.MARKDOWN_V2,
         )
 
