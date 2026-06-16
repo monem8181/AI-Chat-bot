@@ -3,7 +3,7 @@ import re
 import time
 import logging
 from collections import defaultdict
-import anthropic
+from openai import OpenAI
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -33,10 +33,9 @@ OWNER_ID = 8362234130
 RATE_LIMIT_MESSAGES = int(os.environ.get("RATE_LIMIT_MESSAGES", "10"))
 RATE_LIMIT_WINDOW = int(os.environ.get("RATE_LIMIT_WINDOW", "60"))
 
-# Native Anthropic SDK pointed at freemodel.dev
-client = anthropic.Anthropic(
+client = OpenAI(
     api_key=FREEMODEL_API_KEY,
-    base_url="https://cc.freemodel.dev",
+    base_url="https://api.freemodel.dev/v1",
 )
 
 # Per-user chat history: {user_id: [{"role": ..., "content": ...}]}
@@ -265,13 +264,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         chat_histories[user_id] = history[-MAX_HISTORY:]
 
     try:
-        response = client.messages.create(
+        response = client.chat.completions.create(
             model=MODEL,
-            system=SYSTEM_PROMPT,
-            messages=chat_histories[user_id],
+            messages=[{"role": "system", "content": SYSTEM_PROMPT}] + chat_histories[user_id],
             max_tokens=2048,
+            temperature=0.7,
         )
-        ai_reply = response.content[0].text
+        ai_reply = response.choices[0].message.content
         chat_histories[user_id].append({"role": "assistant", "content": ai_reply})
 
         formatted = format_response(ai_reply)
@@ -281,9 +280,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         import traceback
         logger.error(f"API error for user {user_id}: {type(e).__name__}: {e}")
         logger.error(traceback.format_exc())
-        err_text = escape_md(f"{type(e).__name__}: {str(e)[:200]}")
         await update.message.reply_text(
-            f"⚠️ Error: `{err_text}`",
+            "⚠️ Sorry, something went wrong\\. Please try again\\.",
             parse_mode=ParseMode.MARKDOWN_V2,
         )
 
