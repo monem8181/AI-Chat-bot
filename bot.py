@@ -3,7 +3,7 @@ import re
 import time
 import logging
 from collections import defaultdict
-from openai import OpenAI
+import anthropic
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -25,39 +25,29 @@ FREEMODEL_API_KEY = os.environ["FREEMODEL_API_KEY"]
 MODEL = os.environ.get("AI_MODEL", "claude-sonnet-4-6")
 SYSTEM_PROMPT = os.environ.get(
     "SYSTEM_PROMPT",
-    (
-        "You are Claude, an AI assistant made by Anthropic, running as a Telegram bot. "
-        "Be helpful, friendly, and concise."
-    ),
+    "You are Claude, an AI assistant made by Anthropic, running as a Telegram bot. Be helpful, friendly, and concise.",
 )
 
 OWNER_ID = 8362234130
 
-# Rate limit: max messages per window per user (admin is exempt)
 RATE_LIMIT_MESSAGES = int(os.environ.get("RATE_LIMIT_MESSAGES", "10"))
-RATE_LIMIT_WINDOW = int(os.environ.get("RATE_LIMIT_WINDOW", "60"))  # seconds
+RATE_LIMIT_WINDOW = int(os.environ.get("RATE_LIMIT_WINDOW", "60"))
 
-client = OpenAI(
+# Native Anthropic SDK pointed at freemodel.dev
+client = anthropic.Anthropic(
     api_key=FREEMODEL_API_KEY,
-    base_url="https://api.freemodel.dev/v1",
+    base_url="https://cc.freemodel.dev",
 )
 
-# Injected at the start of every conversation to override provider identity
-IDENTITY_PRIMER = [
-    {"role": "user", "content": "Who are you?"},
-    {"role": "assistant", "content": "I'm Claude, an AI assistant made by Anthropic. How can I help you?"},
-]
+# Per-user chat history: {user_id: [{"role": ..., "content": ...}]}
 chat_histories: dict[int, list[dict]] = {}
 MAX_HISTORY = 20
 
-# Rate limiter: {user_id: [timestamp, ...]}
 rate_tracker: dict[int, list[float]] = defaultdict(list)
-
-# Users banned by admin: set of user_ids
 banned_users: set[int] = set()
 
 
-# ── helpers ──────────────────────────────────────────────────────────────────
+# ── helpers ───────────────────────────────────────────────────────────────────
 
 def escape_md(text: str) -> str:
     special = r"\_*[]()~`>#+-=|{}.!"
@@ -71,9 +61,7 @@ def format_response(text: str) -> str:
         if part.startswith("```"):
             match = re.match(r"```(\w+)?\n([\s\S]*?)```", part)
             if match:
-                lang = match.group(1) or ""
-                code = match.group(2)
-                result.append(f"```{lang}\n{code}```")
+                result.append(f"```{match.group(1) or ''}\n{match.group(2)}```")
             else:
                 result.append(part)
         elif part.startswith("`") and part.endswith("`") and len(part) > 2:
@@ -87,13 +75,10 @@ def format_response(text: str) -> str:
 
 
 def is_rate_limited(user_id: int) -> tuple[bool, int]:
-    """Returns (limited, seconds_until_reset)."""
     if user_id == OWNER_ID:
         return False, 0
     now = time.time()
-    timestamps = rate_tracker[user_id]
-    # Drop timestamps outside the window
-    rate_tracker[user_id] = [t for t in timestamps if now - t < RATE_LIMIT_WINDOW]
+    rate_tracker[user_id] = [t for t in rate_tracker[user_id] if now - t < RATE_LIMIT_WINDOW]
     if len(rate_tracker[user_id]) >= RATE_LIMIT_MESSAGES:
         wait = int(RATE_LIMIT_WINDOW - (now - rate_tracker[user_id][0])) + 1
         return True, wait
@@ -105,7 +90,7 @@ def is_admin(user_id: int) -> bool:
     return user_id == OWNER_ID
 
 
-# ── commands ─────────────────────────────────────────────────────────────────
+# ── commands ──────────────────────────────────────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
@@ -189,7 +174,7 @@ async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
-# ── admin commands ────────────────────────────────────────────────────────────
+# ── admin commands ─────────────────────────────────────────────────────────────
 
 async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not is_admin(update.effective_user.id):
@@ -207,8 +192,7 @@ async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         chat_histories.pop(target, None)
         logger.info(f"Admin banned user {target}")
         await update.message.reply_text(
-            f"🔨 User `{target}` has been banned\\.",
-            parse_mode=ParseMode.MARKDOWN_V2,
+            f"🔨 User `{target}` has been banned\\.", parse_mode=ParseMode.MARKDOWN_V2
         )
     except ValueError:
         await update.message.reply_text("❌ Invalid user ID\\.", parse_mode=ParseMode.MARKDOWN_V2)
@@ -226,8 +210,7 @@ async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         banned_users.discard(target)
         logger.info(f"Admin unbanned user {target}")
         await update.message.reply_text(
-            f"✅ User `{target}` has been unbanned\\.",
-            parse_mode=ParseMode.MARKDOWN_V2,
+            f"✅ User `{target}` has been unbanned\\.", parse_mode=ParseMode.MARKDOWN_V2
         )
     except ValueError:
         await update.message.reply_text("❌ Invalid user ID\\.", parse_mode=ParseMode.MARKDOWN_V2)
@@ -237,25 +220,23 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Admin only\\.", parse_mode=ParseMode.MARKDOWN_V2)
         return
-    total_users = len(chat_histories)
-    total_banned = len(banned_users)
     now = time.time()
     active = sum(
-        1 for uid, ts in rate_tracker.items()
+        1 for ts in rate_tracker.values()
         if any(now - t < RATE_LIMIT_WINDOW for t in ts)
     )
     await update.message.reply_text(
         f"📈 *Bot Stats*\n\n"
-        f"Users with history: `{total_users}`\n"
+        f"Users with history: `{len(chat_histories)}`\n"
         f"Active \\(last {RATE_LIMIT_WINDOW}s\\): `{active}`\n"
-        f"Banned users: `{total_banned}`\n"
+        f"Banned users: `{len(banned_users)}`\n"
         f"Model: `{escape_md(MODEL)}`\n"
         f"Rate limit: `{RATE_LIMIT_MESSAGES}` msg / `{RATE_LIMIT_WINDOW}`s",
         parse_mode=ParseMode.MARKDOWN_V2,
     )
 
 
-# ── main message handler ──────────────────────────────────────────────────────
+# ── main message handler ───────────────────────────────────────────────────────
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -283,25 +264,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if len(history) > MAX_HISTORY:
         chat_histories[user_id] = history[-MAX_HISTORY:]
 
-    # Re-inject identity reminder every 10 messages so it stays fresh in context
-    history_with_identity = list(chat_histories[user_id])
-    if len(history_with_identity) >= 10 and len(history_with_identity) % 10 == 1:
-        history_with_identity = (
-            history_with_identity[:-1]
-            + IDENTITY_PRIMER
-            + [history_with_identity[-1]]
-        )
-
     try:
-        response = client.chat.completions.create(
+        response = client.messages.create(
             model=MODEL,
-            messages=[{"role": "system", "content": SYSTEM_PROMPT}]
-            + IDENTITY_PRIMER
-            + history_with_identity,
+            system=SYSTEM_PROMPT,
+            messages=chat_histories[user_id],
             max_tokens=2048,
-            temperature=0.7,
         )
-        ai_reply = response.choices[0].message.content
+        ai_reply = response.content[0].text
         chat_histories[user_id].append({"role": "assistant", "content": ai_reply})
 
         formatted = format_response(ai_reply)
@@ -315,7 +285,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
 
 
-# ── entry point ───────────────────────────────────────────────────────────────
+# ── entry point ────────────────────────────────────────────────────────────────
 
 def main() -> None:
     app = Application.builder().token(TELEGRAM_TOKEN).build()
