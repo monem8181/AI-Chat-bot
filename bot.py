@@ -25,7 +25,13 @@ FREEMODEL_API_KEY = os.environ["FREEMODEL_API_KEY"]
 MODEL = os.environ.get("AI_MODEL", "claude-sonnet-4-6")
 SYSTEM_PROMPT = os.environ.get(
     "SYSTEM_PROMPT",
-    "You are a helpful, friendly AI assistant. Be concise and clear in your responses.",
+    (
+        "You are Claude, an AI assistant made by Anthropic. "
+        "You are running as a Telegram bot. "
+        "If anyone asks who you are or what model you are, always say you are Claude by Anthropic. "
+        "Never claim to be GPT, OpenAI, or any other AI. "
+        "Be helpful, friendly, and concise."
+    ),
 )
 
 OWNER_ID = 8362234130
