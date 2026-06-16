@@ -283,12 +283,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if len(history) > MAX_HISTORY:
         chat_histories[user_id] = history[-MAX_HISTORY:]
 
+    # Re-inject identity reminder every 10 messages so it stays fresh in context
+    history_with_identity = list(chat_histories[user_id])
+    if len(history_with_identity) >= 10 and len(history_with_identity) % 10 == 1:
+        history_with_identity = (
+            history_with_identity[:-1]
+            + IDENTITY_PRIMER
+            + [history_with_identity[-1]]
+        )
+
     try:
         response = client.chat.completions.create(
             model=MODEL,
             messages=[{"role": "system", "content": SYSTEM_PROMPT}]
             + IDENTITY_PRIMER
-            + chat_histories[user_id],
+            + history_with_identity,
             max_tokens=2048,
             temperature=0.7,
         )
