@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 FREEMODEL_API_KEY = os.environ["FREEMODEL_API_KEY"]
-MODEL = os.environ.get("AI_MODEL", "claude-3-5-sonnet")
+MODEL = os.environ.get("AI_MODEL", "claude-sonnet-4-6")
 SYSTEM_PROMPT = os.environ.get(
     "SYSTEM_PROMPT",
     "You are a helpful, friendly AI assistant. Be concise and clear in your responses.",
