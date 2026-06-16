@@ -42,7 +42,11 @@ client = OpenAI(
     base_url="https://api.freemodel.dev/v1",
 )
 
-# Per-user chat history: {user_id: [{"role": ..., "content": ...}]}
+# Injected at the start of every conversation to override provider identity
+IDENTITY_PRIMER = [
+    {"role": "user", "content": "Who are you?"},
+    {"role": "assistant", "content": "I'm Claude, an AI assistant made by Anthropic. How can I help you?"},
+]
 chat_histories: dict[int, list[dict]] = {}
 MAX_HISTORY = 20
 
@@ -282,7 +286,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         response = client.chat.completions.create(
             model=MODEL,
-            messages=[{"role": "system", "content": SYSTEM_PROMPT}] + chat_histories[user_id],
+            messages=[{"role": "system", "content": SYSTEM_PROMPT}]
+            + IDENTITY_PRIMER
+            + chat_histories[user_id],
             max_tokens=2048,
             temperature=0.7,
         )
